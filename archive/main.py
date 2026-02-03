@@ -6,16 +6,44 @@ Batch processor: reads URLs from urls.txt, transcribes, and saves to JSON.
 Fully automated - no interactive prompts.
 """
 
+import glob
 import json
 import os
 import time
 from datetime import datetime
-from typing import List
+from typing import List, Set
 
 from dotenv import load_dotenv
 
 from src.downloader import download_audio
 from src.transcriber import get_transcriber
+
+
+def format_duration(seconds: float) -> str:
+    """
+    Format duration in seconds to human-readable string.
+
+    Args:
+        seconds: Duration in seconds
+
+    Returns:
+        str: Formatted duration (e.g., "2m 35s", "1h 15m 23s", "42s")
+    """
+    seconds = int(seconds)
+
+    if seconds < 60:
+        return f"{seconds}s"
+
+    minutes = seconds // 60
+    secs = seconds % 60
+
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h {mins}m {secs}s"
+
 
 # Get the base directory of the archive package (always points to archive/ folder)
 ARCHIVE_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,61 +73,88 @@ def load_urls() -> List[str]:
     return urls
 
 
-def save_result(data: dict, filename: str = "games_archive.json") -> None:
+def load_processed_urls() -> Set[str]:
     """
-    Append game data to the JSON archive file.
+    Scan data directory for existing game JSON files and extract processed URLs.
+    Enables resume functionality by skipping already processed videos.
+
+    Returns:
+        Set[str]: Set of URLs that have been processed
+    """
+    processed = set()
+
+    if not os.path.exists(DATA_DIR):
+        return processed
+
+    # Find all .json files in data directory
+    json_files = glob.glob(os.path.join(DATA_DIR, "game_*.json"))
+
+    if not json_files:
+        return processed
+
+    print(f"Scanning {len(json_files)} existing file(s) in {DATA_DIR}...")
+
+    for file_path in json_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                url = data.get('url')
+                if url:
+                    processed.add(url)
+        except Exception as e:
+            print(f"⚠ Warning: Could not read {os.path.basename(file_path)}: {e}")
+            continue
+
+    return processed
+
+
+def save_result(data: dict) -> None:
+    """
+    Save game data to an individual JSON file.
+    Uses the game ID as the filename (e.g., game_1770125240.json).
 
     Args:
-        data: Game data dictionary to append
-        filename: Filename (not path) for the JSON archive file in archive/data/
+        data: Game data dictionary with 'id' field
     """
-    # Construct full path relative to archive/data/
-    filepath = os.path.join(DATA_DIR, filename)
-
     # Ensure data directory exists
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # Load existing archive or initialize empty list
-    archive = []
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                archive = json.load(f)
-        except json.JSONDecodeError:
-            print(f"Warning: Could not parse {filepath}. Starting fresh archive.")
-            archive = []
+    # Use game ID as filename
+    game_id = data.get('id', f"game_{int(time.time())}")
+    filename = f"{game_id}.json"
+    filepath = os.path.join(DATA_DIR, filename)
 
-    # Append new game data
-    archive.append(data)
-
-    # Write back to file
+    # Write to individual file
     with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(archive, f, ensure_ascii=False, indent=4)
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
     print(f"✓ Game data saved to: {filepath}")
 
 
-def process_video(url: str, transcriber, index: int, total: int) -> bool:
+def process_video(url: str, transcriber, index: int, total: int, already_processed: int = 0) -> bool:
     """
     Process a single YouTube video: download, transcribe, and save.
 
     Args:
         url: YouTube video URL
         transcriber: Transcriber instance to use
-        index: Current video index (1-based)
-        total: Total number of videos in queue
+        index: Current video index in this session (1-based)
+        total: Total number of videos in urls.txt
+        already_processed: Number of videos already in archive
 
     Returns:
         bool: True if processing succeeded, False otherwise
     """
+    k = already_processed + index
+
     print()
     print("=" * 80)
-    print(f"Processing {index}/{total}: {url}")
+    print(f"=== Processing [{k} / {total}]: {url} ===")
     print("=" * 80)
 
     # Step 1: Download audio
     print()
-    print(f"[{index}/{total}] STEP 1: Downloading audio...")
+    print(f"[{k}/{total}] STEP 1: Downloading audio...")
     audio_path, video_title = download_audio(url, output_dir=AUDIO_DIR)
 
     if audio_path is None:
@@ -110,7 +165,11 @@ def process_video(url: str, transcriber, index: int, total: int) -> bool:
 
     # Step 2: Transcribe
     print()
-    print(f"[{index}/{total}] STEP 2: Transcribing audio...")
+    print(f"[{k}/{total}] STEP 2: Transcribing audio...")
+
+    # Start timer
+    transcription_start = time.time()
+
     try:
         transcript_segments = transcriber.transcribe(audio_path)
     except Exception as e:
@@ -122,11 +181,15 @@ def process_video(url: str, transcriber, index: int, total: int) -> bool:
             pass
         return False
 
-    print(f"✓ Transcription complete: {len(transcript_segments)} segments")
+    # Calculate transcription time
+    transcription_duration = time.time() - transcription_start
+    duration_str = format_duration(transcription_duration)
+
+    print(f"✓ Transcription complete: {len(transcript_segments)} segments in {duration_str}")
 
     # Step 3: Save results
     print()
-    print(f"[{index}/{total}] STEP 3: Saving results...")
+    print(f"[{k}/{total}] STEP 3: Saving results...")
 
     # Auto-generate Game ID from timestamp
     game_id = f"game_{int(time.time())}"
@@ -145,12 +208,12 @@ def process_video(url: str, transcriber, index: int, total: int) -> bool:
         "transcript": transcript_segments
     }
 
-    # Save to JSON archive
+    # Save to individual JSON file
     save_result(game_data)
 
     # Step 4: Cleanup
     print()
-    print(f"[{index}/{total}] STEP 4: Cleaning up...")
+    print(f"[{k}/{total}] STEP 4: Cleaning up...")
     try:
         os.remove(audio_path)
         print(f"✓ Deleted temporary audio file: {audio_path}")
@@ -159,7 +222,7 @@ def process_video(url: str, transcriber, index: int, total: int) -> bool:
 
     print()
     print("=" * 80)
-    print(f"✓ Video {index}/{total} processed successfully!")
+    print(f"✓ Video {k}/{total} processed successfully!")
     print("=" * 80)
 
     return True
@@ -200,7 +263,26 @@ def main():
         print()
         return
 
+    # Check for already processed URLs (scan existing JSON files)
+    processed_urls = load_processed_urls()
+    urls_to_process = [url for url in urls if url not in processed_urls]
+
     print(f"✓ Loaded {len(urls)} URL(s) from {URLS_FILE}")
+    print()
+
+    if processed_urls:
+        print(f"✓ Found {len(processed_urls)} already processed video(s)")
+        print(f"✓ {len(urls_to_process)} remaining URL(s) to process")
+    else:
+        print(f"✓ No previous progress found. Processing all {len(urls)} URL(s)")
+
+    if not urls_to_process:
+        print()
+        print("=" * 80)
+        print("✓ All URLs have been processed!")
+        print("=" * 80)
+        return
+
     print()
 
     # Initialize transcriber once (reuse for all videos)
@@ -217,8 +299,8 @@ def main():
     success_count = 0
     failure_count = 0
 
-    for i, url in enumerate(urls, start=1):
-        success = process_video(url, transcriber, i, len(urls))
+    for i, url in enumerate(urls_to_process, start=1):
+        success = process_video(url, transcriber, i, len(urls), len(processed_urls))
         if success:
             success_count += 1
         else:
@@ -229,7 +311,9 @@ def main():
     print("=" * 80)
     print("BATCH PROCESSING COMPLETE!")
     print("=" * 80)
-    print(f"Total videos: {len(urls)}")
+    print(f"Total URLs in queue: {len(urls)}")
+    print(f"Already processed: {len(processed_urls)}")
+    print(f"Processed this session: {success_count + failure_count}")
     print(f"✓ Successful: {success_count}")
     print(f"✗ Failed: {failure_count}")
     print("=" * 80)

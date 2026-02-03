@@ -10,6 +10,21 @@ from abc import ABC, abstractmethod
 from typing import List, Dict
 
 
+def seconds_to_mmss(seconds: float) -> str:
+    """
+    Convert seconds to MM:SS format.
+
+    Args:
+        seconds: Time in seconds
+
+    Returns:
+        str: Formatted time as MM:SS
+    """
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes:02d}:{secs:02d}"
+
+
 class BaseTranscriber(ABC):
     """
     Abstract base class for transcription backends.
@@ -50,8 +65,10 @@ class FasterWhisperBackend(BaseTranscriber):
         """
         from faster_whisper import WhisperModel
 
-        print(f"[Faster-Whisper Backend] Loading model: {model_size} (device={device}, compute_type={compute_type})")
-        self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        print(
+            f"[Faster-Whisper Backend] Loading model: {model_size} (device={device}, compute_type={compute_type})")
+        self.model = WhisperModel(
+            model_size, device=device, compute_type=compute_type)
         print("[Faster-Whisper Backend] Model loaded successfully.")
 
     def transcribe(self, audio_path: str) -> List[Dict[str, any]]:
@@ -84,13 +101,16 @@ class FasterWhisperBackend(BaseTranscriber):
         )
 
         # Log detected language information
-        print(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
+        print(
+            f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
 
         # Process segments
         results = []
         for segment in segments:
             # Print progress
-            print(f"[{segment.start:.1f}s -> {segment.end:.1f}s] {segment.text.strip()}")
+            start_time = seconds_to_mmss(segment.start)
+            end_time = seconds_to_mmss(segment.end)
+            print(f"[{start_time} -> {end_time}] {segment.text.strip()}")
 
             # Append to results
             results.append({
@@ -99,7 +119,8 @@ class FasterWhisperBackend(BaseTranscriber):
                 "text": segment.text.strip()
             })
 
-        print(f"[Faster-Whisper Backend] Transcription completed. Total segments: {len(results)}")
+        print(
+            f"[Faster-Whisper Backend] Transcription completed. Total segments: {len(results)}")
         return results
 
 
@@ -133,11 +154,24 @@ class MlxWhisperBackend(BaseTranscriber):
                 "mlx-whisper is not installed. Install it with: pip install mlx-whisper"
             ) from e
 
-        # MLX community model naming: mlx-community/whisper-{size}-mlx
-        self.model_path = f"mlx-community/whisper-{model_size}-mlx"
+        # Dynamic model path mapping with validation
+        model_map = {
+            "small": "mlx-community/whisper-small-mlx",
+            "medium": "mlx-community/whisper-medium-mlx",
+            "large-v3": "mlx-community/whisper-large-v3-mlx",
+        }
+
+        if model_size not in model_map:
+            raise ValueError(
+                f"Unsupported model size for MLX backend: '{model_size}'. "
+                f"Supported models: {', '.join(model_map.keys())}"
+            )
+
+        self.model_path = model_map[model_size]
         self.model_size = model_size
 
-        print(f"[MLX Backend] Initialized with model: {self.model_path} (GPU Mode)")
+        print(
+            f"[MLX Backend] Initialized with model: {self.model_path} (GPU Mode)")
 
     def transcribe(self, audio_path: str) -> List[Dict[str, any]]:
         """
@@ -153,8 +187,13 @@ class MlxWhisperBackend(BaseTranscriber):
 
         # Mafia-specific context for better recognition of game terminology
         initial_prompt = (
-            "Игра Мафия. Ведущий объявляет: город засыпает, просыпается Дон, Шериф, Мафия. "
-            "Голосование, фол, перестрелка, автокатастрофа, попил стола, победа города, победа мафии, Левша, 22."
+            "Транскрипция игры в профессиональную Мафию. Термины: Красный игрок (мирный), Черный игрок (мафия), "
+            "Дон ищет Шерифа, Шериф ищет Мафию. Действия: вскрытие, лжешериф, проверка, жесткая проверка, "
+            "маяк, самострел, промах, договорка, отстрел, динамика. "
+            "Голосование: выставление кандидатуры, попил стола, автокатастрофа, перестрелка, критический круг, "
+            "угадайка, баланс, противовес, три в три, два в два. "
+            "Фразы: я пас, выставляю игрока, забираю руку, фол, удаление, речь, агуканье. "
+            "Левша, 22."
         )
 
         # Transcribe using MLX with quality settings
@@ -177,7 +216,9 @@ class MlxWhisperBackend(BaseTranscriber):
             end = segment.get("end", 0.0)
             text = segment.get("text", "").strip()
 
-            print(f"[{start:.1f}s -> {end:.1f}s] {text}")
+            start_time = seconds_to_mmss(start)
+            end_time = seconds_to_mmss(end)
+            print(f"[{start_time} -> {end_time}] {text}")
 
             # Append to results
             results.append({
@@ -186,7 +227,8 @@ class MlxWhisperBackend(BaseTranscriber):
                 "text": text
             })
 
-        print(f"[MLX Backend] Transcription completed. Total segments: {len(results)}")
+        print(
+            f"[MLX Backend] Transcription completed. Total segments: {len(results)}")
         return results
 
 

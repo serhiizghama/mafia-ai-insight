@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# MacOS
+.DS_Store
+
+# Project Specific (Stage 1)
+# Ignore downloaded audio
+archive/audio/*
+!archive/audio/.gitkeep
+
+# Ignore local database (if you don't want to store it in git)
+archive/data/*
+!archive/data/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+docs/

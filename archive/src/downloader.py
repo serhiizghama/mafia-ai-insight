@@ -5,10 +5,12 @@ Wrapper for yt-dlp to download audio from YouTube videos.
 """
 
 import os
+from typing import Optional, Tuple
+
 import yt_dlp
 
 
-def download_audio(youtube_url: str, output_dir: str = "audio") -> tuple[str | None, str | None]:
+def download_audio(youtube_url: str, output_dir: str = "audio") -> Tuple[Optional[str], Optional[str]]:
     """
     Download audio from a YouTube video.
 
@@ -17,12 +19,13 @@ def download_audio(youtube_url: str, output_dir: str = "audio") -> tuple[str | N
         output_dir: Directory to save the audio file (default: "audio")
 
     Returns:
-        tuple[str | None, str | None]: (filepath, title) on success, (None, None) on error
+        Tuple[Optional[str], Optional[str]]: (filepath, title) on success, (None, None) on error
     """
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
     # Configure yt-dlp options
+    # player_client: try android/mweb to reduce HTTP 403 (YouTube often blocks default client)
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
         'outtmpl': f'{output_dir}/%(id)s.%(ext)s',
@@ -32,6 +35,9 @@ def download_audio(youtube_url: str, output_dir: str = "audio") -> tuple[str | N
         }],
         'quiet': True,
         'no_warnings': True,
+        'extractor_args': {
+            'youtube': {'player_client': ['android', 'mweb']},
+        },
     }
 
     try:

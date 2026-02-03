@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 venv/
+*/.venv/*
 .env
 
 # MacOS
@@ -17,7 +18,11 @@ archive/audio/*
 archive/data/*
 !archive/data/.gitkeep
 
+# Ignore URL queue (local-only)
+archive/urls.txt
+
 # IDE
+.claude/
 .vscode/
 .idea/
 docs/
